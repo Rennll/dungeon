@@ -1,0 +1,67 @@
+================================================================================
+SEMANTIC-ORIENTED ANALYSIS: hlm.txt
+================================================================================
+This report organizes evidence; it does not infer paragraphs.
+
+1. Strong structural signal
+   Blank-line runs are preserved as events. Their length and location should be
+   considered separately from leading indentation.
+
+2. Leading indentation signal
+   U+3000x2 is a stable formatting regime in this source. It should not be
+   automatically equated with a paragraph delimiter. NO_INDENT is heterogeneous
+   and may mix body openings, metadata, navigation, or separators.
+
+3. Within blank-delimited blocks
+   ASCII_SPACE_x4 -> NO_INDENT: 2
+   NO_INDENT -> U+3000x2: 108
+   U+3000x2 -> ASCII_SPACE_x4: 0
+   U+3000x2 -> NO_INDENT: 0
+
+4. Blocks containing >=3 U+3000x2 lines: 120
+   lines 13-54: U+3000x2=41, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 63-82: U+3000x2=19, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 92-120: U+3000x2=29, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 129-148: U+3000x2=19, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 157-277: U+3000x2=120, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 287-308: U+3000x2=22, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 318-340: U+3000x2=23, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 350-378: U+3000x2=29, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 388-397: U+3000x2=10, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 406-423: U+3000x2=17, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 433-455: U+3000x2=23, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 465-478: U+3000x2=14, NO_INDENT=0, ASCII_SPACE_x4=0
+   lines 487-507: U+3000x2=20, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 516-537: U+3000x2=21, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 546-559: U+3000x2=13, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 568-589: U+3000x2=21, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 598-620: U+3000x2=22, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 629-700: U+3000x2=71, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 709-735: U+3000x2=26, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 744-754: U+3000x2=10, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 763-791: U+3000x2=28, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 800-846: U+3000x2=46, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 855-893: U+3000x2=38, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 902-926: U+3000x2=24, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 935-962: U+3000x2=27, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 971-995: U+3000x2=24, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 1004-1046: U+3000x2=42, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 1055-1093: U+3000x2=38, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 1102-1126: U+3000x2=24, NO_INDENT=1, ASCII_SPACE_x4=0
+   lines 1135-1151: U+3000x2=16, NO_INDENT=1, ASCII_SPACE_x4=0
+
+5. Contract guardrails for cn-epub-maker
+   - Do not treat every U+3000x2 line as a paragraph boundary.
+   - Do not treat NO_INDENT as one semantic class.
+   - Keep blank-line runs structurally visible.
+   - Leading indentation may be paragraph/presentation evidence; inspect it in document context.
+   - Keep this analyzer descriptive; paragraph semantics belong to the parser contract.
+
+6. Detailed files
+   U+3000x2 -> ASCII_SPACE_x4: 0 cases
+   ASCII_SPACE_x4 -> NO_INDENT: 2 cases
+   NO_INDENT -> U+3000x2: 20 cases
+   U+3000x2 -> NO_INDENT: 0 cases
+   blank run x8: 1 cases
+   blank run x2: 12 cases
+   blank run x5: 20 cases

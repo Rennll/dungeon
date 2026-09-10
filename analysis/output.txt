@@ -1,0 +1,39 @@
+================================================================================
+WHITESPACE ANALYSIS: hlm.txt
+================================================================================
+encoding: utf-8
+BOM: no
+lines: 3621
+nonblank lines: 2882
+blank lines: 739
+CRLF: 3620
+LF: 0
+CR: 0
+
+--- Leading categories ---
+  U+3000x2: 2515
+  ASCII_SPACE_x4: 246
+  NO_INDENT: 120
+  ASCII_SPACE_x1: 1
+
+--- Whitespace counts ---
+  U+3000 leading: 5030
+  ASCII spaces leading: 986
+  TAB leading: 0
+  mixed-leading lines: 0
+  trailing U+3000: 0
+  internal U+3000: 128
+
+--- Blank-line runs ---
+  1: 112
+  2: 12
+  5: 119
+  8: 1
+
+--- Indentation transitions (blank lines skipped) ---
+  U+3000x2           -> U+3000x2          : 2394
+  ASCII_SPACE_x4     -> ASCII_SPACE_x4    : 122
+  NO_INDENT          -> U+3000x2          : 108
+  NO_INDENT          -> NO_INDENT         : 10
+  NO_INDENT          -> ASCII_SPACE_x4    : 2
+  ASCII_SPACE_x4     -> NO_INDENT         : 2

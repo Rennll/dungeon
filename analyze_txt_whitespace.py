@@ -98,8 +98,9 @@ def indent_signature(line: str) -> str:
         parts.append(f"U+3000={counts[IDEOGRAPHIC_SPACE]}")
     if counts[" "]:
         parts.append(f"space={counts[' ']}")
-    if counts["\t"]:
-        parts.append(f"tab={counts['\t']}")
+    tab_count = counts["\t"]
+    if tab_count:
+        parts.append(f"tab={tab_count}")
     return ", ".join(parts)
 
 
@@ -388,33 +389,20 @@ def analyze_file(path: Path, context_limit: int, detailed_output: TextIO | None 
     if not blank_runs:
         print("  (none)")
     else:
-        for run_length, count in sorted(blank_runs.items()):
-            print(f"  {run_length} consecutive blank line(s): {count}")
+        for length, count in sorted(blank_runs.items()):
+            print(f"  {length}: {count}")
 
     print()
     print("--- Indentation transitions (blank lines skipped) ---")
-    print_transition_counter(transition_stats(lines), limit=30)
+    print_transition_counter(transition_stats(lines))
 
     print()
-    print("--- Physical-line transitions (blank lines included) ---")
-    print_transition_counter(transition_stats_with_blank(lines), limit=40)
+    print("--- Physical-line transitions ---")
+    print_transition_counter(transition_stats_with_blank(lines))
 
+    print()
+    print("--- Selected examples ---")
     print_examples(find_examples(lines, context_limit))
-
-    print()
-    print("--- Mixed / unusual indentation samples ---")
-    unusual_count = 0
-    for i, line in enumerate(lines, start=1):
-        if is_blank(line):
-            continue
-        category = leading_category(line)
-        if category == "MIXED" or (category.startswith("U+3000") and len(leading_whitespace(line)) not in {1, 2}):
-            print(f"  line {i:>7}: {category:15s} [{indent_signature(line)}] {visible_line(line)}")
-            unusual_count += 1
-            if unusual_count >= context_limit:
-                break
-    if unusual_count == 0:
-        print("  (none)")
 
     if detailed_output is not None:
         write_detailed_report(
@@ -427,30 +415,34 @@ def analyze_file(path: Path, context_limit: int, detailed_output: TextIO | None 
         )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Analyze whitespace patterns in Chinese TXT files.")
-    parser.add_argument("files", nargs="+", type=Path, help="TXT files to analyze")
-    parser.add_argument("--context-limit", type=int, default=20, help="Maximum detailed cases per category (default: 20)")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("files", nargs="+", type=Path)
+    parser.add_argument(
+        "--context-limit",
+        type=int,
+        default=20,
+        help="maximum examples / detailed cases per category (default: 20)",
+    )
     parser.add_argument(
         "--detailed-output",
         type=Path,
-        help="Write targeted forensic contexts to this file; stdout remains the compact summary",
+        help="write targeted forensic contexts to this file",
     )
-    args = parser.parse_args()
+    return parser
 
-    detailed_output = None
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.context_limit < 1:
+        parser.error("--context-limit must be >= 1")
+
+    detailed_output: TextIO | None = None
     try:
         if args.detailed_output is not None:
             detailed_output = args.detailed_output.open("w", encoding="utf-8")
-            detailed_output.write("# Targeted whitespace evidence\n")
-
         for path in args.files:
-            if not path.exists():
-                print(f"ERROR: file not found: {path}")
-                continue
-            if not path.is_file():
-                print(f"ERROR: not a file: {path}")
-                continue
             analyze_file(path, args.context_limit, detailed_output)
     finally:
         if detailed_output is not None:

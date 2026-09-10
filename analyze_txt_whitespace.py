@@ -1,453 +1,190 @@
 #!/usr/bin/env python3
+"""Analyze whitespace patterns in Chinese novel TXT files.
+
+Read-only analyzer. By default it writes output.txt, output_analysis.txt and
+split forensic files (output_detailed_01.txt, ...), so large reports stay easy
+to inspect. It never infers or rewrites paragraphs.
 """
-Analyze whitespace / paragraph-like patterns in Chinese TXT files.
-
-Usage:
-    python analyze_txt_whitespace.py source-a.txt source-b.txt
-    python analyze_txt_whitespace.py hlm.txt --detailed-output output_detailed.txt
-
-This script is read-only:
-- It never modifies source files.
-- It reports whitespace characteristics.
-- It does NOT attempt to infer or rewrite paragraphs.
-"""
-
 from __future__ import annotations
-
-import argparse
-import codecs
+import argparse, codecs
 from collections import Counter
 from pathlib import Path
-from typing import Iterable, TextIO
+from typing import TextIO
 
-IDEOGRAPHIC_SPACE = "\u3000"
-WHITESPACE_CHARS = " \t\u3000"
-TARGET_TRANSITIONS = {
-    ("U+3000x2", "ASCII_SPACE_x4"),
-    ("ASCII_SPACE_x4", "NO_INDENT"),
-    ("NO_INDENT", "U+3000x2"),
-}
-TARGET_BLANK_RUNS = {5, 8}
+U3000="\u3000"; WS=" \t\u3000"
+TARGETS={("U+3000x2","ASCII_SPACE_x4"),("ASCII_SPACE_x4","NO_INDENT"),("NO_INDENT","U+3000x2"),("U+3000x2","NO_INDENT")}
+BLANK_TARGETS={2,5,8}
 
+def read_text(p:Path):
+    raw=p.read_bytes(); bom=False
+    if raw.startswith(codecs.BOM_UTF8): enc="utf-8-sig"; bom=True
+    elif raw.startswith(codecs.BOM_UTF16_LE): enc="utf-16-le"; bom=True
+    elif raw.startswith(codecs.BOM_UTF16_BE): enc="utf-16-be"; bom=True
+    else:
+        enc="utf-8"
+        for e in ("utf-8","gb18030","big5","cp950"):
+            try: raw.decode(e); enc=e; break
+            except UnicodeDecodeError: pass
+    try: text=raw.decode(enc)
+    except UnicodeDecodeError: text=raw.decode(enc,errors="replace"); enc += " (errors=replace)"
+    return text.replace("\r\n","\n").replace("\r","\n"),enc,bom,raw
 
-def detect_encoding(path: Path) -> tuple[str, bool]:
-    raw = path.read_bytes()
-    if raw.startswith(codecs.BOM_UTF8):
-        return "utf-8-sig", True
-    if raw.startswith(codecs.BOM_UTF16_LE):
-        return "utf-16-le", True
-    if raw.startswith(codecs.BOM_UTF16_BE):
-        return "utf-16-be", True
-    for encoding in ("utf-8", "gb18030", "big5", "cp950"):
-        try:
-            raw.decode(encoding)
-            return encoding, False
-        except UnicodeDecodeError:
-            pass
-    return "utf-8", False
+def lead(s):
+    i=0
+    while i<len(s) and s[i] in WS:i+=1
+    return s[:i]
 
-
-def read_text(path: Path) -> tuple[str, str, bool]:
-    encoding, has_bom = detect_encoding(path)
-    raw = path.read_bytes()
-    try:
-        text = raw.decode(encoding)
-    except UnicodeDecodeError:
-        encoding = f"{encoding} (errors=replace)"
-        text = raw.decode(encoding.split()[0], errors="replace")
-    return text, encoding, has_bom
-
-
-def normalize_newlines_for_analysis(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def leading_whitespace(line: str) -> str:
-    i = 0
-    while i < len(line) and line[i] in WHITESPACE_CHARS:
-        i += 1
-    return line[:i]
-
-
-def leading_category(line: str) -> str:
-    if line == "":
-        return "EMPTY"
-    ws = leading_whitespace(line)
-    if not ws:
-        return "NO_INDENT"
-    if set(ws) == {IDEOGRAPHIC_SPACE}:
-        return f"U+3000x{len(ws)}"
-    if set(ws) == {" "}:
-        return f"ASCII_SPACE_x{len(ws)}"
-    if set(ws) == {"\t"}:
-        return f"TABx{len(ws)}"
+def cat(s):
+    if s=="":return "EMPTY"
+    w=lead(s)
+    if not w:return "NO_INDENT"
+    if set(w)=={U3000}:return f"U+3000x{len(w)}"
+    if set(w)=={" "}:return f"ASCII_SPACE_x{len(w)}"
+    if set(w)=={"\t"}:return f"TABx{len(w)}"
     return "MIXED"
 
+def blank(s):return s.strip(WS)==""
+def kind(s):return "BLANK" if blank(s) else cat(s)
 
-def is_blank(line: str) -> bool:
-    return line.strip(WHITESPACE_CHARS) == ""
+def transitions(lines):
+    out=Counter(); prev=None
+    for s in lines:
+        k=kind(s)
+        if k=="BLANK":prev=None;continue
+        if prev:out[(prev,k)]+=1
+        prev=k
+    return out
 
+def blank_runs(lines):
+    out=[];i=0
+    while i<len(lines):
+        if not blank(lines[i]):i+=1;continue
+        a=i
+        while i<len(lines) and blank(lines[i]):i+=1
+        out.append((a,i))
+    return out
 
-def indent_signature(line: str) -> str:
-    ws = leading_whitespace(line)
-    if not ws:
-        return "none"
-    counts = Counter(ws)
-    parts = []
-    if counts[IDEOGRAPHIC_SPACE]:
-        parts.append(f"U+3000={counts[IDEOGRAPHIC_SPACE]}")
-    if counts[" "]:
-        parts.append(f"space={counts[' ']}")
-    tab_count = counts["\t"]
-    if tab_count:
-        parts.append(f"tab={tab_count}")
-    return ", ".join(parts)
+def blocks(lines):
+    out=[];a=None;c=Counter()
+    for i,s in enumerate(lines):
+        if blank(s):
+            if a is not None:out.append((a,i,c));a=None;c=Counter()
+        else:
+            if a is None:a=i
+            c[kind(s)]+=1
+    if a is not None:out.append((a,len(lines),c))
+    return out
 
+def events(lines,limit):
+    out={k:[] for k in TARGETS};prev=None
+    for i,s in enumerate(lines):
+        k=kind(s)
+        if k=="BLANK":prev=None;continue
+        if prev:
+            key=(prev,k)
+            if key in out and len(out[key])<limit:out[key].append(i)
+        prev=k
+    return out
 
-def physical_kind(line: str) -> str:
-    if is_blank(line):
-        return "BLANK"
-    ws = leading_whitespace(line)
-    if ws == "\u3000\u3000":
-        return "U+3000x2"
-    if ws == "    ":
-        return "ASCII_SPACE_x4"
-    if ws == "":
-        return "NO_INDENT"
-    return indent_signature(line)
+def blank_events(lines,limit):
+    out={n:[] for n in BLANK_TARGETS}
+    for a,b in blank_runs(lines):
+        n=b-a
+        if n in out and len(out[n])<limit:out[n].append((a,b))
+    return out
 
+def context(out:TextIO,lines,a,b,hi):
+    for i in range(max(0,a),min(len(lines),b)):
+        out.write(f"{('>>' if i in hi else '  ')} {i+1:6d} {kind(lines[i]):18s} {lines[i]!r}\n")
 
-def visible_line(line: str, max_chars: int = 120) -> str:
-    escaped = (
-        line.replace("\\", "\\\\")
-        .replace("\t", "\\t")
-        .replace(IDEOGRAPHIC_SPACE, "␠")
-    )
-    return escaped if len(escaped) <= max_chars else escaped[:max_chars] + "…"
+def write_detail(p,source,lines,te,be,before,after,no,total):
+    with p.open("w",encoding="utf-8") as o:
+        o.write("="*80+f"\nDETAILED WHITESPACE EVIDENCE: {source}\nCHUNK {no}/{total}\n"+"="*80+"\n")
+        o.write("Targeted contexts only; no paragraph semantics are inferred.\n")
+        for k,ids in te.items():
+            o.write(f"\n[{k[0]} -> {k[1]}] cases: {len(ids)}\n")
+            for j,i in enumerate(ids,1):
+                o.write(f"\nCASE T{j:02d} transition at lines {i}->{i+1}\n"+"-"*80+"\n")
+                context(o,lines,i-before,i+after+1,{i-1,i})
+        for n,runs in be.items():
+            o.write(f"\n[BLANK RUN x{n}] cases: {len(runs)}\n")
+            for j,(a,b) in enumerate(runs,1):
+                o.write(f"\nCASE B{j:02d} blank lines {a+1}-{b}\n"+"-"*80+"\n")
+                context(o,lines,a-before,b+after,set(range(a,b)))
 
+def summary(p,lines,enc,bom,raw):
+    cats=Counter(cat(s) for s in lines if not blank(s));tr=transitions(lines);br=Counter(b-a for a,b in blank_runs(lines));bl=[s for s in lines if blank(s)]
+    u=a=t=m=trail=internal=0
+    for s in lines:
+        w=lead(s);u+=w.count(U3000);a+=w.count(" ");t+=w.count("\t");m+=len(set(w))>1
+        trail+=len(s)-len(s.rstrip(U3000));rest=s[len(w):];internal+=max(rest.count(U3000)-(len(s)-len(s.rstrip(U3000))),0)
+    crlf=raw.count(b"\r\n");cr=raw.count(b"\r")-crlf;lf=raw.count(b"\n")-crlf
+    return f"""================================================================================
+WHITESPACE ANALYSIS: {p}
+================================================================================
+encoding: {enc}
+BOM: {'yes' if bom else 'no'}
+lines: {len(lines)}
+nonblank lines: {len(lines)-len(bl)}
+blank lines: {len(bl)}
+CRLF: {crlf}\nLF: {lf}\nCR: {cr}
 
-def get_blank_run_lengths(lines: list[str]) -> Counter[int]:
-    runs: Counter[int] = Counter()
-    current = 0
-    for line in lines:
-        if is_blank(line):
-            current += 1
-        elif current:
-            runs[current] += 1
-            current = 0
-    if current:
-        runs[current] += 1
-    return runs
+--- Leading categories ---
+"""+"".join(f"  {k}: {v}\n" for k,v in cats.most_common())+"""
+--- Whitespace counts ---
+"""+f"  U+3000 leading: {u}\n  ASCII spaces leading: {a}\n  TAB leading: {t}\n  mixed-leading lines: {m}\n  trailing U+3000: {trail}\n  internal U+3000: {internal}\n\n--- Blank-line runs ---\n"+"".join(f"  {k}: {v}\n" for k,v in sorted(br.items()))+"\n--- Indentation transitions (blank lines skipped) ---\n"+"".join(f"  {x:18s} -> {y:18s}: {n}\n" for (x,y),n in tr.most_common())
 
+def analysis(p,lines,te,be):
+    tr=transitions(lines);bs=blocks(lines);cand=[x for x in bs if x[2]["U+3000x2"]>=3]
+    s=f"""================================================================================
+SEMANTIC-ORIENTED ANALYSIS: {p}
+================================================================================
+This report organizes evidence; it does not infer paragraphs.
 
-def get_nonblank_indent_stats(lines: Iterable[str]) -> dict[str, Counter]:
-    categories = Counter()
-    signatures = Counter()
-    for line in lines:
-        if not is_blank(line):
-            categories[leading_category(line)] += 1
-            signatures[indent_signature(line)] += 1
-    return {"categories": categories, "signatures": signatures}
+1. Strong structural signal
+   Blank-line runs are preserved as events. Their length and location should be
+   considered separately from leading indentation.
 
+2. Leading indentation signal
+   U+3000x2 is a stable formatting regime in this source. It should not be
+   automatically equated with a paragraph delimiter. NO_INDENT is heterogeneous
+   and may mix body openings, metadata, navigation, or separators.
 
-def transition_stats(lines: list[str]) -> Counter[tuple[str, str]]:
-    result: Counter[tuple[str, str]] = Counter()
-    previous: str | None = None
-    for line in lines:
-        if is_blank(line):
-            continue
-        current = leading_category(line)
-        if previous is not None:
-            result[(previous, current)] += 1
-        previous = current
-    return result
+3. Within blank-delimited blocks
+"""
+    for k in sorted(TARGETS):s+=f"   {k[0]} -> {k[1]}: {tr[k]}\n"
+    s+=f"\n4. Blocks containing >=3 U+3000x2 lines: {len(cand)}\n"
+    for a,b,c in cand[:30]:s+=f"   lines {a+1}-{b}: U+3000x2={c['U+3000x2']}, NO_INDENT={c['NO_INDENT']}, ASCII_SPACE_x4={c['ASCII_SPACE_x4']}\n"
+    s+="""\n5. Contract guardrails for cn-epub-maker
+   - Do not treat every U+3000x2 line as a paragraph boundary.
+   - Do not treat NO_INDENT as one semantic class.
+   - Keep blank-line runs structurally visible.
+   - Leading indentation may be paragraph/presentation evidence; inspect it in document context.
+   - Keep this analyzer descriptive; paragraph semantics belong to the parser contract.
 
+6. Detailed files
+"""
+    for k,v in te.items():s+=f"   {k[0]} -> {k[1]}: {len(v)} cases\n"
+    for n,v in be.items():s+=f"   blank run x{n}: {len(v)} cases\n"
+    return s
 
-def transition_stats_with_blank(lines: list[str]) -> Counter[tuple[str, str]]:
-    result: Counter[tuple[str, str]] = Counter()
-    previous: str | None = None
-    for line in lines:
-        current = "BLANK" if is_blank(line) else leading_category(line)
-        if previous is not None:
-            result[(previous, current)] += 1
-        previous = current
-    return result
-
-
-def print_counter(counter: Counter, *, indent: str = "  ", limit: int | None = None) -> None:
-    items = counter.most_common(limit)
-    if not items:
-        print(indent + "(none)")
-        return
-    for key, value in items:
-        print(f"{indent}{key}: {value}")
-
-
-def print_transition_counter(counter: Counter[tuple[str, str]], *, limit: int | None = None) -> None:
-    items = counter.most_common(limit)
-    if not items:
-        print("  (none)")
-        return
-    for (a, b), count in items:
-        print(f"  {a:20s} -> {b:20s}: {count}")
-
-
-def find_examples(lines: list[str], context_limit: int) -> dict[str, list[tuple[int, str, str]]]:
-    targets = {
-        "U+3000 -> NO_INDENT": [],
-        "NO_INDENT -> U+3000": [],
-        "U+3000 -> U+3000": [],
-        "MIXED": [],
-    }
-    for i in range(1, len(lines)):
-        previous, current = lines[i - 1], lines[i]
-        if is_blank(previous) or is_blank(current):
-            continue
-        prev_cat, curr_cat = leading_category(previous), leading_category(current)
-        if prev_cat.startswith("U+3000") and curr_cat == "NO_INDENT" and len(targets["U+3000 -> NO_INDENT"]) < context_limit:
-            targets["U+3000 -> NO_INDENT"].append((i + 1, previous, current))
-        if prev_cat == "NO_INDENT" and curr_cat.startswith("U+3000") and len(targets["NO_INDENT -> U+3000"]) < context_limit:
-            targets["NO_INDENT -> U+3000"].append((i + 1, previous, current))
-        if prev_cat.startswith("U+3000") and curr_cat.startswith("U+3000") and len(targets["U+3000 -> U+3000"]) < context_limit:
-            targets["U+3000 -> U+3000"].append((i + 1, previous, current))
-        if curr_cat == "MIXED" and len(targets["MIXED"]) < context_limit:
-            targets["MIXED"].append((i + 1, previous, current))
-    return targets
-
-
-def print_examples(examples: dict[str, list[tuple[int, str, str]]]) -> None:
-    for name, rows in examples.items():
-        print()
-        print(f"--- Examples: {name} ---")
-        if not rows:
-            print("  (none)")
-            continue
-        for line_no, previous, current in rows:
-            print(f"  line {line_no - 1}: {visible_line(previous)}")
-            print(f"  line {line_no}:     {visible_line(current)}")
-            print()
-
-
-def collect_transition_events(lines: list[str], max_events: int) -> dict[tuple[str, str], list[int]]:
-    events = {key: [] for key in TARGET_TRANSITIONS}
-    previous_kind: str | None = None
-    for i, line in enumerate(lines):
-        current_kind = physical_kind(line)
-        if previous_kind is not None:
-            key = (previous_kind, current_kind)
-            if key in events and len(events[key]) < max_events:
-                events[key].append(i)
-        previous_kind = current_kind
-    return events
-
-
-def collect_blank_runs(lines: list[str], target_lengths: set[int], max_events: int) -> dict[int, list[tuple[int, int]]]:
-    events = {length: [] for length in target_lengths}
-    i = 0
-    while i < len(lines):
-        if not is_blank(lines[i]):
-            i += 1
-            continue
-        start = i
-        while i < len(lines) and is_blank(lines[i]):
-            i += 1
-        length = i - start
-        if length in events and len(events[length]) < max_events:
-            events[length].append((start, i))
-    return events
-
-
-def write_context(out: TextIO, lines: list[str], start: int, end: int, highlight: set[int]) -> None:
-    for j in range(start, end):
-        marker = ">>" if j in highlight else "  "
-        out.write(
-            f"{marker} {j + 1:6d} {physical_kind(lines[j]):18s} {lines[j].rstrip(chr(13) + chr(10))!r}\n"
-        )
-
-
-def write_detailed_report(
-    out: TextIO,
-    path: Path,
-    lines: list[str],
-    context_before: int,
-    context_after: int,
-    max_events: int,
-) -> None:
-    """Write targeted forensic evidence without dumping the whole source."""
-    transition_events = collect_transition_events(lines, max_events)
-    blank_events = collect_blank_runs(lines, TARGET_BLANK_RUNS, max_events)
-
-    out.write("=" * 80 + "\n")
-    out.write(f"DETAILED WHITESPACE EVIDENCE: {path}\n")
-    out.write("=" * 80 + "\n")
-    out.write("This report contains targeted contexts only; it does not infer paragraph semantics.\n")
-    out.write(f"context before: {context_before}\n")
-    out.write(f"context after:  {context_after}\n")
-    out.write(f"max events/category: {max_events}\n")
-
-    out.write("\n")
-    out.write("--- TARGET TRANSITIONS ---\n")
-    for transition in sorted(TARGET_TRANSITIONS):
-        indices = transition_events[transition]
-        out.write("\n")
-        out.write(f"[{transition[0]} -> {transition[1]}]  count shown: {len(indices)}\n")
-        for occurrence, i in enumerate(indices, 1):
-            start = max(0, i - context_before - 1)
-            end = min(len(lines), i + context_after + 1)
-            out.write(f"\nCASE T{occurrence:02d}  transition at lines {i} -> {i + 1}\n")
-            out.write("-" * 80 + "\n")
-            write_context(out, lines, start, end, {i - 1, i})
-
-    out.write("\n")
-    out.write("--- TARGET BLANK RUNS ---\n")
-    for length in sorted(TARGET_BLANK_RUNS):
-        runs = blank_events[length]
-        out.write("\n")
-        out.write(f"[BLANK RUN x{length}]  count shown: {len(runs)}\n")
-        for occurrence, (start_blank, end_blank) in enumerate(runs, 1):
-            start = max(0, start_blank - context_before)
-            end = min(len(lines), end_blank + context_after)
-            out.write(
-                f"\nCASE B{occurrence:02d}  blank lines {start_blank + 1}-{end_blank}\n"
-            )
-            out.write("-" * 80 + "\n")
-            write_context(out, lines, start, end, set(range(start_blank, end_blank)))
-
-
-def analyze_file(path: Path, context_limit: int, detailed_output: TextIO | None = None) -> None:
-    print()
-    print("=" * 80)
-    print(f"FILE: {path}")
-    print("=" * 80)
-    try:
-        text, encoding, has_bom = read_text(path)
-    except Exception as exc:
-        print(f"ERROR: {exc}")
-        return
-
-    text = normalize_newlines_for_analysis(text)
-    lines = text.split("\n")
-    nonblank_lines = [line for line in lines if not is_blank(line)]
-    blank_lines = [line for line in lines if is_blank(line)]
-
-    print(f"encoding:       {encoding}")
-    print(f"BOM:             {'yes' if has_bom else 'no'}")
-    print(f"lines:           {len(lines)}")
-    print(f"nonblank lines:  {len(nonblank_lines)}")
-    print(f"blank lines:     {len(blank_lines)}")
-
-    print()
-    print("--- Newline / physical-line information ---")
-    raw_bytes = path.read_bytes()
-    crlf_count = raw_bytes.count(b"\r\n")
-    cr_count = raw_bytes.count(b"\r") - crlf_count
-    lf_count = raw_bytes.count(b"\n") - crlf_count
-    print(f"CRLF: {crlf_count}")
-    print(f"LF:   {lf_count}")
-    print(f"CR:   {cr_count}")
-
-    print()
-    print("--- Leading whitespace categories ---")
-    indent_stats = get_nonblank_indent_stats(lines)
-    print_counter(indent_stats["categories"])
-
-    print()
-    print("--- Leading whitespace signatures ---")
-    print_counter(indent_stats["signatures"], limit=30)
-
-    print()
-    print("--- Leading whitespace character counts ---")
-    leading_u3000 = leading_ascii_space = leading_tab = mixed = 0
-    for line in nonblank_lines:
-        ws = leading_whitespace(line)
-        leading_u3000 += ws.count(IDEOGRAPHIC_SPACE)
-        leading_ascii_space += ws.count(" ")
-        leading_tab += ws.count("\t")
-        if len(set(ws)) > 1:
-            mixed += 1
-    print(f"U+3000 in leading whitespace: {leading_u3000}")
-    print(f"ASCII spaces in leading whitespace: {leading_ascii_space}")
-    print(f"TABs in leading whitespace: {leading_tab}")
-    print(f"mixed-leading-whitespace lines: {mixed}")
-
-    print()
-    print("--- U+3000 outside leading whitespace ---")
-    trailing_u3000 = internal_u3000 = 0
-    for line in lines:
-        ws = leading_whitespace(line)
-        rest = line[len(ws):]
-        trailing_count = len(line) - len(line.rstrip(IDEOGRAPHIC_SPACE))
-        trailing_u3000 += trailing_count
-        internal_count = rest.count(IDEOGRAPHIC_SPACE) - trailing_count
-        internal_u3000 += max(internal_count, 0)
-    print(f"trailing U+3000 characters: {trailing_u3000}")
-    print(f"internal U+3000 characters: {internal_u3000}")
-
-    print()
-    print("--- Blank-line runs ---")
-    blank_runs = get_blank_run_lengths(lines)
-    if not blank_runs:
-        print("  (none)")
-    else:
-        for length, count in sorted(blank_runs.items()):
-            print(f"  {length}: {count}")
-
-    print()
-    print("--- Indentation transitions (blank lines skipped) ---")
-    print_transition_counter(transition_stats(lines))
-
-    print()
-    print("--- Physical-line transitions ---")
-    print_transition_counter(transition_stats_with_blank(lines))
-
-    print()
-    print("--- Selected examples ---")
-    print_examples(find_examples(lines, context_limit))
-
-    if detailed_output is not None:
-        write_detailed_report(
-            detailed_output,
-            path,
-            lines,
-            context_before=5,
-            context_after=5,
-            max_events=context_limit,
-        )
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("files", nargs="+", type=Path)
-    parser.add_argument(
-        "--context-limit",
-        type=int,
-        default=20,
-        help="maximum examples / detailed cases per category (default: 20)",
-    )
-    parser.add_argument(
-        "--detailed-output",
-        type=Path,
-        help="write targeted forensic contexts to this file",
-    )
-    return parser
-
-
-def main() -> None:
-    parser = build_parser()
-    args = parser.parse_args()
-    if args.context_limit < 1:
-        parser.error("--context-limit must be >= 1")
-
-    detailed_output: TextIO | None = None
-    try:
-        if args.detailed_output is not None:
-            detailed_output = args.detailed_output.open("w", encoding="utf-8")
-        for path in args.files:
-            analyze_file(path, args.context_limit, detailed_output)
-    finally:
-        if detailed_output is not None:
-            detailed_output.close()
-
-
-if __name__ == "__main__":
-    main()
+def main():
+    ap=argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("files",nargs="+",type=Path);ap.add_argument("--output-dir",type=Path,default=Path("."));ap.add_argument("--output-prefix",default="output")
+    ap.add_argument("--context-limit",type=int,default=20);ap.add_argument("--chunk-size",type=int,default=10);ap.add_argument("--context-before",type=int,default=5);ap.add_argument("--context-after",type=int,default=5)
+    args=ap.parse_args()
+    if args.context_limit<1 or args.chunk_size<1 or args.context_before<0 or args.context_after<0:ap.error("limits must be valid non-negative/positive values")
+    args.output_dir.mkdir(parents=True,exist_ok=True);multi=len(args.files)>1
+    for src in args.files:
+        text,enc,bom,raw=read_text(src);lines=text.split("\n");base=args.output_prefix+(f"_{src.stem}" if multi and args.output_prefix=="output" else "")
+        te=events(lines,args.context_limit);be=blank_events(lines,args.context_limit)
+        records=[("t",k,i) for k,ids in te.items() for i in ids]+[("b",n,r) for n,rs in be.items() for r in rs]
+        chunks=[records[i:i+args.chunk_size] for i in range(0,len(records),args.chunk_size)] or [[]]
+        for no,chunk in enumerate(chunks,1):
+            ct={k:[] for k in TARGETS};cb={n:[] for n in BLANK_TARGETS}
+            for typ,k,v in chunk:(ct[k] if typ=="t" else cb[k]).append(v)
+            write_detail(args.output_dir/f"{base}_detailed_{no:02d}.txt",src,lines,ct,cb,args.context_before,args.context_after,no,len(chunks))
+        (args.output_dir/f"{base}.txt").write_text(summary(src,lines,enc,bom,raw),encoding="utf-8")
+        (args.output_dir/f"{base}_analysis.txt").write_text(analysis(src,lines,te,be),encoding="utf-8")
+        print(f"FILE: {src}\n  summary: {base}.txt\n  analysis: {base}_analysis.txt\n  detailed: {len(chunks)} file(s)")
+if __name__=="__main__":main()

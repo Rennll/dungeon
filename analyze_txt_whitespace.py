@@ -149,6 +149,7 @@ def indent_signature(line: str) -> str:
 
     return ", ".join(parts)
 
+
 def physical_kind(line: str) -> str:
     if not line.strip():
         return "BLANK"
@@ -289,6 +290,7 @@ def print_blank_run_contexts(
     print("Summary:")
     for length, count in hits.items():
         print(f"  blank run x{length}: {count}")
+
 
 def visible_line(line: str, max_chars: int = 100) -> str:
     """
@@ -694,6 +696,31 @@ def analyze_file(path: Path, context_limit: int) -> None:
     if unusual_count == 0:
         print("  (none)")
 
+    # ------------------------------------------------------------
+    # Transition contexts for whitespace-regime investigation
+    # ------------------------------------------------------------
+
+    print_transition_contexts(
+        lines,
+        {
+            ("U+3000x2", "ASCII_SPACE_x4"),
+            ("ASCII_SPACE_x4", "NO_INDENT"),
+            ("NO_INDENT", "U+3000x2"),
+        },
+        context=3,
+        max_per_transition=context_limit,
+    )
+
+    print_blank_run_contexts(
+        lines,
+        {
+            5,
+            8,
+        },
+        context=3,
+        max_per_length=context_limit,
+    )
+
     print()
 
 
@@ -728,26 +755,6 @@ def main() -> None:
             continue
 
         analyze_file(path, args.context_limit)
-    print_transition_contexts(
-        lines,
-        {
-            ("U+3000x2", "ASCII_SPACE_x4"),
-            ("ASCII_SPACE_x4", "NO_INDENT"),
-            ("NO_INDENT", "U+3000x2"),
-        },
-        context=3,
-        max_per_transition=20,
-    )
-
-    print_blank_run_contexts(
-        lines,
-        {
-            5,
-            8,
-        },
-        context=3,
-        max_per_length=20,
-    )
 
 
 if __name__ == "__main__":

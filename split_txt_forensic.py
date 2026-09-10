@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """Split large TXT sources into connector-friendly forensic samples.
 
-The splitter is intentionally lossless: it never normalizes whitespace, changes
-line endings, or attempts to infer paragraph semantics. It writes UTF-8 text
-chunks with stable source line numbers so a large source can be inspected in
-small GitHub-readable files.
+The splitter preserves source text content and whitespace semantics. It does
+not infer paragraphs or normalize indentation. Input line endings are
+canonicalized to LF only so blank-line detection is stable across CRLF/CR/LF
+sources; output is UTF-8.
 
-Two modes are provided:
-
-* ``chunks``: sequential chunks, preferably split at a blank-line boundary.
-* ``forensic``: targeted samples around whitespace transitions and blank-line
-  runs, with context before/after each event.
-
-The forensic mode is designed for comparing novel-specific formatting regimes,
-not for producing parser input.
+Modes:
+  chunks   Split the source into small UTF-8 files, preferring blank boundaries.
+  forensic Write targeted samples around indentation transitions and blank runs.
+  both     Produce both kinds of output (default).
 """
 from __future__ import annotations
 
@@ -47,11 +43,14 @@ def read_source(path: Path) -> tuple[str, str, bool]:
                 break
             except UnicodeDecodeError:
                 continue
+
     try:
         text = raw.decode(encoding)
     except UnicodeDecodeError:
         text = raw.decode(encoding, errors="replace")
         encoding += " (errors=replace)"
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return text, encoding, bom
 
 
@@ -92,8 +91,8 @@ def blank_runs(lines: list[str]) -> list[tuple[int, int]]:
 
 
 def transitions(lines: list[str]) -> list[tuple[int, str, str]]:
-    """Return (zero-based line index, previous category, current category)."""
-    result = []
+    """Return (zero-based current-line index, previous category, current)."""
+    result: list[tuple[int, str, str]] = []
     previous: str | None = None
     for i, line in enumerate(lines):
         current = category(line)
@@ -129,31 +128,36 @@ def event_key(kind: str, value: tuple) -> str:
 
 
 def build_forensic(lines: list[str], limit: int) -> dict[str, list[tuple]]:
-    transitions_by_key: dict[str, list[tuple]] = {}
+    events: dict[str, list[tuple]] = {}
     for line_no, previous, current in transitions(lines):
         key = event_key("transition", (previous, current))
-        transitions_by_key.setdefault(key, [])
-        if len(transitions_by_key[key]) < limit:
-            transitions_by_key[key].append((line_no, previous, current))
+        events.setdefault(key, [])
+        if len(events[key]) < limit:
+            events[key].append((line_no, previous, current))
 
-    blanks_by_key: dict[str, list[tuple]] = {}
     for start, end in blank_runs(lines):
         key = event_key("blank", (end - start,))
-        blanks_by_key.setdefault(key, [])
-        if len(blanks_by_key[key]) < limit:
-            blanks_by_key[key].append((start, end))
+        events.setdefault(key, [])
+        if len(events[key]) < limit:
+            events[key].append((start, end))
+    return events
 
-    return {**transitions_by_key, **blanks_by_key}
 
-
-def write_forensic(path: Path, source: Path, lines: list[str], limit: int, before: int, after: int) -> None:
+def write_forensic(
+    path: Path,
+    source: Path,
+    lines: list[str],
+    limit: int,
+    before: int,
+    after: int,
+) -> None:
     events = build_forensic(lines, limit)
-    text: list[str] = [
+    text = [
         "=" * 80,
         f"FORENSIC TXT SAMPLE: {source}",
         "=" * 80,
         "Whitespace is shown with repr(); source line numbers are 1-based.",
-        "No whitespace normalization or paragraph inference is performed.",
+        "No paragraph inference is performed.",
     ]
 
     for key in sorted(events):
@@ -171,43 +175,74 @@ def write_forensic(path: Path, source: Path, lines: list[str], limit: int, befor
     path.write_text("\n".join(text) + "\n", encoding="utf-8")
 
 
-def split_chunks(lines: list[str], max_lines: int) -> list[tuple[int, int]]:
-    chunks: list[tuple[int, int]] = []
+def split_chunks(lines: list[str], max_bytes: int) -> list[tuple[int, int, int, bool]]:
+    """Return (start, end, UTF-8 bytes, oversize-single-line)."""
+    chunks: list[tuple[int, int, int, bool]] = []
     start = 0
-    while start < len(lines):
-        target = min(start + max_lines, len(lines))
-        if target < len(lines):
-            # Prefer a nearby blank-line boundary without allowing one huge block
-            # to defeat the requested size.
-            boundary = target
-            for i in range(target, start, -1):
-                if category(lines[i - 1]) == "BLANK":
-                    boundary = i
-                    break
-            if boundary == start:
-                boundary = target
-            target = boundary
-        chunks.append((start, target))
-        start = target
+    n = len(lines)
+
+    while start < n:
+        size = 0
+        i = start
+        last_good_boundary: int | None = None
+        size_at_boundary = 0
+        boundary_floor = int(max_bytes * 0.75)
+
+        while i < n:
+            piece_size = len((lines[i] + "\n").encode("utf-8"))
+            if i > start and size + piece_size > max_bytes:
+                break
+            size += piece_size
+            i += 1
+            if category(lines[i - 1]) == "BLANK" and size >= boundary_floor:
+                last_good_boundary = i
+                size_at_boundary = size
+
+        if i == start:
+            # A single pathological line may exceed the target size. Keep it
+            # intact rather than splitting inside a line.
+            i = start + 1
+            size = len((lines[start] + "\n").encode("utf-8"))
+            chunks.append((start, i, size, True))
+            start = i
+            continue
+
+        if i < n and last_good_boundary is not None:
+            i = last_good_boundary
+            size = size_at_boundary
+
+        chunks.append((start, i, size, size > max_bytes))
+        start = i
+
     return chunks
 
 
-def write_chunks(output_dir: Path, prefix: str, source: Path, lines: list[str], max_lines: int) -> int:
-    ranges = split_chunks(lines, max_lines)
-    for number, (start, end) in enumerate(ranges, 1):
+def write_chunks(
+    output_dir: Path,
+    prefix: str,
+    source: Path,
+    lines: list[str],
+    max_bytes: int,
+) -> list[tuple[Path, int, int, int, bool]]:
+    ranges = split_chunks(lines, max_bytes)
+    result = []
+    for number, (start, end, byte_count, oversize) in enumerate(ranges, 1):
         path = output_dir / f"{prefix}_{source.stem}_chunk_{number:03d}.txt"
-        content = [
-            f"# SOURCE: {source}",
-            f"# LINES: {start + 1}-{end}",
-            "# NOTE: source lines below are preserved verbatim; line numbers are metadata only.",
-            "",
-        ]
-        content.extend(lines[start:end])
-        path.write_text("\n".join(content), encoding="utf-8")
-    return len(ranges)
+        path.write_text("\n".join(lines[start:end]) + "\n", encoding="utf-8")
+        result.append((path, start + 1, end, byte_count, oversize))
+    return result
 
 
-def write_index(output_dir: Path, prefix: str, source: Path, lines: list[str], encoding: str, bom: bool, chunk_count: int) -> None:
+def write_index(
+    output_dir: Path,
+    prefix: str,
+    source: Path,
+    lines: list[str],
+    encoding: str,
+    bom: bool,
+    chunks: list[tuple[Path, int, int, int, bool]],
+    max_bytes: int,
+) -> None:
     cats = Counter(category(line) for line in lines)
     runs = Counter(end - start for start, end in blank_runs(lines))
     transitions_count = len(transitions(lines))
@@ -215,10 +250,13 @@ def write_index(output_dir: Path, prefix: str, source: Path, lines: list[str], e
         "=" * 80,
         f"SPLIT INDEX: {source}",
         "=" * 80,
-        f"encoding: {encoding}",
+        f"detected_encoding: {encoding}",
         f"BOM: {'yes' if bom else 'no'}",
+        "output_encoding: utf-8",
+        "output_line_endings: LF",
         f"lines: {len(lines)}",
-        f"chunks: {chunk_count}",
+        f"chunk_target_bytes: {max_bytes}",
+        f"chunks: {len(chunks)}",
         f"nonblank indentation transitions (blank lines reset): {transitions_count}",
         "",
         "--- line categories ---",
@@ -229,33 +267,48 @@ def write_index(output_dir: Path, prefix: str, source: Path, lines: list[str], e
     content.extend(f"x{key}: {value}" for key, value in sorted(runs.items()))
     content.append("")
     content.append("--- chunk files ---")
-    content.extend(f"{prefix}_{source.stem}_chunk_{i:03d}.txt" for i in range(1, chunk_count + 1))
-    (output_dir / f"{prefix}_{source.stem}_index.txt").write_text("\n".join(content) + "\n", encoding="utf-8")
+    for path, start, end, byte_count, oversize in chunks:
+        suffix = "  [OVERSIZE SINGLE LINE]" if oversize else ""
+        content.append(f"{path.name}: lines {start}-{end}, utf8_bytes={byte_count}{suffix}")
+    (output_dir / f"{prefix}_{source.stem}_index.txt").write_text(
+        "\n".join(content) + "\n", encoding="utf-8"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path)
+    parser.add_argument("source", type=Path, help="large TXT source")
     parser.add_argument("--output-dir", type=Path, default=Path("analysis/samples"))
     parser.add_argument("--prefix", default="sample")
     parser.add_argument("--mode", choices=("chunks", "forensic", "both"), default="both")
-    parser.add_argument("--max-lines", type=int, default=500)
-    parser.add_argument("--limit", type=int, default=20, help="Maximum examples per forensic event")
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=65536,
+        help="target UTF-8 size per chunk; lines are never split",
+    )
+    parser.add_argument("--limit", type=int, default=20, help="examples per forensic event")
     parser.add_argument("--context-before", type=int, default=8)
     parser.add_argument("--context-after", type=int, default=8)
     args = parser.parse_args()
 
-    if args.max_lines < 1 or args.limit < 1 or args.context_before < 0 or args.context_after < 0:
-        parser.error("max-lines and limit must be positive; context values must be non-negative")
+    if args.max_bytes < 1024 or args.limit < 1 or args.context_before < 0 or args.context_after < 0:
+        parser.error("max-bytes must be >= 1024; limit must be positive; context values must be non-negative")
+    if not args.source.is_file():
+        parser.error(f"source file not found: {args.source}")
 
     text, encoding, bom = read_source(args.source)
-    lines = text.splitlines()
+    lines = text.split("\n")
+    # Avoid inventing an extra source line when the file ends with LF.
+    if lines and lines[-1] == "":
+        lines.pop()
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    chunk_count = 0
+    chunks = []
     if args.mode in {"chunks", "both"}:
-        chunk_count = write_chunks(args.output_dir, args.prefix, args.source, lines, args.max_lines)
-        write_index(args.output_dir, args.prefix, args.source, lines, encoding, bom, chunk_count)
+        chunks = write_chunks(args.output_dir, args.prefix, args.source, lines, args.max_bytes)
+        write_index(args.output_dir, args.prefix, args.source, lines, encoding, bom, chunks, args.max_bytes)
 
     if args.mode in {"forensic", "both"}:
         write_forensic(
@@ -268,8 +321,11 @@ def main() -> None:
         )
 
     print(f"source: {args.source}")
-    if chunk_count:
-        print(f"chunks: {chunk_count}")
+    print(f"detected encoding: {encoding}")
+    print(f"lines: {len(lines)}")
+    if chunks:
+        print(f"chunks: {len(chunks)}")
+        print(f"index: {args.prefix}_{args.source.stem}_index.txt")
     if args.mode in {"forensic", "both"}:
         print(f"forensic: {args.prefix}_{args.source.stem}_forensic.txt")
 

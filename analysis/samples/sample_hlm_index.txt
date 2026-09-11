@@ -1,0 +1,70 @@
+================================================================================
+SPLIT INDEX: hlm.txt
+================================================================================
+detected_encoding: utf-8
+BOM: no
+output_encoding: utf-8
+output_line_endings: LF
+lines: 3620
+chunk_target_bytes: 65536
+chunks: 44
+nonblank indentation transitions (blank lines reset): 112
+
+--- line categories ---
+U+3000x2: 2515
+BLANK: 738
+ASCII_SPACE_x4: 246
+NO_INDENT: 120
+ASCII_SPACE_x1: 1
+
+--- blank-line runs ---
+x1: 111
+x2: 12
+x5: 119
+x8: 1
+
+--- chunk files ---
+sample_hlm_chunk_001.txt: lines 1-116, utf8_bytes=65265
+sample_hlm_chunk_002.txt: lines 117-306, utf8_bytes=65488
+sample_hlm_chunk_003.txt: lines 307-405, utf8_bytes=59987
+sample_hlm_chunk_004.txt: lines 406-515, utf8_bytes=61413
+sample_hlm_chunk_005.txt: lines 516-597, utf8_bytes=54742
+sample_hlm_chunk_006.txt: lines 598-721, utf8_bytes=65131
+sample_hlm_chunk_007.txt: lines 722-840, utf8_bytes=65522
+sample_hlm_chunk_008.txt: lines 841-951, utf8_bytes=63643
+sample_hlm_chunk_009.txt: lines 952-1080, utf8_bytes=65045
+sample_hlm_chunk_010.txt: lines 1081-1159, utf8_bytes=55020
+sample_hlm_chunk_011.txt: lines 1160-1212, utf8_bytes=53861
+sample_hlm_chunk_012.txt: lines 1213-1276, utf8_bytes=64311
+sample_hlm_chunk_013.txt: lines 1277-1457, utf8_bytes=64880
+sample_hlm_chunk_014.txt: lines 1458-1511, utf8_bytes=50142
+sample_hlm_chunk_015.txt: lines 1512-1583, utf8_bytes=63791
+sample_hlm_chunk_016.txt: lines 1584-1658, utf8_bytes=64857
+sample_hlm_chunk_017.txt: lines 1659-1847, utf8_bytes=64974
+sample_hlm_chunk_018.txt: lines 1848-1949, utf8_bytes=51058
+sample_hlm_chunk_019.txt: lines 1950-2000, utf8_bytes=51263
+sample_hlm_chunk_020.txt: lines 2001-2053, utf8_bytes=50982
+sample_hlm_chunk_021.txt: lines 2054-2108, utf8_bytes=55305
+sample_hlm_chunk_022.txt: lines 2109-2180, utf8_bytes=58234
+sample_hlm_chunk_023.txt: lines 2181-2240, utf8_bytes=64060
+sample_hlm_chunk_024.txt: lines 2241-2301, utf8_bytes=55441
+sample_hlm_chunk_025.txt: lines 2302-2356, utf8_bytes=60513
+sample_hlm_chunk_026.txt: lines 2357-2450, utf8_bytes=61091
+sample_hlm_chunk_027.txt: lines 2451-2494, utf8_bytes=58897
+sample_hlm_chunk_028.txt: lines 2495-2532, utf8_bytes=62063
+sample_hlm_chunk_029.txt: lines 2533-2601, utf8_bytes=54873
+sample_hlm_chunk_030.txt: lines 2602-2685, utf8_bytes=62656
+sample_hlm_chunk_031.txt: lines 2686-2740, utf8_bytes=63171
+sample_hlm_chunk_032.txt: lines 2741-2807, utf8_bytes=55459
+sample_hlm_chunk_033.txt: lines 2808-2891, utf8_bytes=60881
+sample_hlm_chunk_034.txt: lines 2892-2959, utf8_bytes=53565
+sample_hlm_chunk_035.txt: lines 2960-3023, utf8_bytes=65235
+sample_hlm_chunk_036.txt: lines 3024-3090, utf8_bytes=65183
+sample_hlm_chunk_037.txt: lines 3091-3182, utf8_bytes=59377
+sample_hlm_chunk_038.txt: lines 3183-3245, utf8_bytes=60089
+sample_hlm_chunk_039.txt: lines 3246-3305, utf8_bytes=51280
+sample_hlm_chunk_040.txt: lines 3306-3351, utf8_bytes=64712
+sample_hlm_chunk_041.txt: lines 3352-3416, utf8_bytes=65433
+sample_hlm_chunk_042.txt: lines 3417-3487, utf8_bytes=58756
+sample_hlm_chunk_043.txt: lines 3488-3542, utf8_bytes=64713
+sample_hlm_chunk_044.txt: lines 3543-3620, utf8_bytes=55145
